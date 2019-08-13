@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.layers import Input, Add, Dense, Activation, ZeroPadding2D, BatchNormalization, Flatten, Conv2D, AveragePooling2D, MaxPooling2D, UpSampling2D, GlobalAveragePooling2D
-from tensorflow.keras.models import Model
+from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.initializers import glorot_uniform
 import tensorflow.keras.backend as K
 from sklearn.metrics import roc_auc_score
@@ -149,7 +149,7 @@ class convNN:
         return f
 
 
-    def build(self, shape=None):
+    def build(self, shape=None, load=None):
         self.shape = (self.img_rows,self.img_cols,self.channels)
         if shape is not None:
             self.shape = shape
@@ -168,6 +168,12 @@ class convNN:
         f = self.convolutional_block(f, k=3, filters=[16,16,32], stage='2', block='a', s=2)
         f = self.identity_block(f, k=3, filters=[32,32,32], stage='2', block='b')
         f = self.identity_block(f, k=3, filters=[32,32,32], stage='2', block='c')
+        f = MaxPooling2D((3,3),strides=(2,2))(f)
+
+        f = self.convolutional_block(f, k=3, filters=[32,32,64], stage='3', block='a', s=2)
+        f = self.identity_block(f, k=3, filters=[64,64,64], stage='3', block='b')
+        f = self.identity_block(f, k=3, filters=[64,64,64], stage='3', block='c')
+
         f = GlobalAveragePooling2D()(f)
 
         output = Dense(2,activation="softmax")(f)
@@ -176,11 +182,15 @@ class convNN:
         self.nn.compile(optimizer = self.optimizer,loss=self.loss, metrics=self.metrics)
         self.nn.summary()
 
+        if load is not None:
+            self.nn = load_model(self.save_path + "CNN.h5")
+
     def train(self, epoch, load=None):
         if load is not None:
             self.nn.load_weights(self.save_path)
-        self.nn.fit(self.ds,epochs=epoch,steps_per_epoch=5000,validation_split:0.2)
-        self.nn.save_weights(self.save_path)
+        history = self.nn.fit(self.ds,epochs=epoch,steps_per_epoch=5000)
+        self.nn.save(self.save_path+"CNN.h5")
+        return history
 
     def predict(self,test_paths,labels):
         path_ds = tf.data.Dataset.from_tensor_slices(test_paths)
