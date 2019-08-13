@@ -196,6 +196,9 @@ class convNN:
         path_ds = tf.data.Dataset.from_tensor_slices(test_paths)
         image_ds = path_ds.map(self._load_and_preprocess_image,
                                 num_parallel_calls=self.AUTOTUNE)
-        label_ds = tf.data.Dataset.from_tensor_slices(tf.cast(self.labels, tf.int16))
-        image_label_ds = tf.data.Dataset.zip((image_ds, label_ds))
-        return [self.nn.evaluate(image_label_ds),self.nn.predict(image_ds)]
+        label_ds = tf.data.Dataset.from_tensor_slices(tf.cast(labels, tf.int16))
+        ds = tf.data.Dataset.zip((image_ds, label_ds))
+        ds = ds.batch(32)
+        ds = ds.prefetch(buffer_size=self.AUTOTUNE)
+        predictions = self.nn.predict(ds)
+        return [self.nn.evaluate(ds),predictions]
