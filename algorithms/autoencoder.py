@@ -179,5 +179,13 @@ class convNN:
     def train(self, epoch, load=None):
         if load is not None:
             self.nn.load_weights(self.save_path)
-        self.nn.fit(self.ds,epochs=epoch,steps_per_epoch=5000)
+        self.nn.fit(self.ds,epochs=epoch,steps_per_epoch=5000,validation_split:0.2)
         self.nn.save_weights(self.save_path)
+
+    def predict(self,test_paths,labels):
+        path_ds = tf.data.Dataset.from_tensor_slices(test_paths)
+        image_ds = path_ds.map(self._load_and_preprocess_image,
+                                num_parallel_calls=self.AUTOTUNE)
+        label_ds = tf.data.Dataset.from_tensor_slices(tf.cast(self.labels, tf.int16))
+        image_label_ds = tf.data.Dataset.zip((image_ds, label_ds))
+        return [self.nn.evaluate(image_label_ds),self.nn.predict(image_ds)]
