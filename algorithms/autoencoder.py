@@ -1,16 +1,17 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.layers import Input, Add, Dense, Activation, ZeroPadding2D, BatchNormalization, Flatten, Conv2D, AveragePooling2D, MaxPooling2D, UpSampling2D, GlobalAveragePooling2D
+from tensorflow.keras.layers import Input, Add, Dense, Activation, Softmax, BatchNormalization, Flatten, Conv2D, Conv2DTranspose, MaxPooling2D, UpSampling2D, GlobalAveragePooling2D
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.initializers import glorot_uniform
 import tensorflow.keras.backend as K
+from algorithms.custom import Euclidian
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import classification_report
 from pathlib import Path
 
-tf.enable_eager_execution()
+# tf.enable_eager_execution()
 
-class convNN:
+class autoencoder:
     def __init__(self, image_paths, labels, save_path=None):
         K.set_floatx('float32')
         self.image_paths = image_paths
@@ -58,95 +59,100 @@ class convNN:
         self.ds = self.ds.repeat()
         self.ds = self.ds.prefetch(buffer_size=self.AUTOTUNE)
 
-    def identity_block(self,f, k, filters, stage, block):
-        # defining name basis
-        conv_name_base = 'res' + str(stage) + block + '_branch'
-        bn_name_base = 'bn' + str(stage) + block + '_branch'
+    def _encoder(self, x, filters):
+        F1, F2, F3, F4, F5 = filters
 
-        F1, F2, F3 = filters
-        f_shortcut = f
-
-        # first convolutional layer
-        f = Conv2D(filters = F1,
-                    kernel_size = (1, 1),
-                    strides = (1,1), padding = 'valid',
-                    name = conv_name_base + '2a',
-                    kernel_initializer = glorot_uniform(seed=0))(f)
-        f = BatchNormalization(axis = 3, name = bn_name_base + '2a')(f)
-        f = Activation('relu')(f)
-
-        # second convolutional layer
-        f = Conv2D(filters = F2,
-                    kernel_size = (k, k),
-                    strides = (1,1), padding = 'same',
-                    name = conv_name_base + '2b',
-                    kernel_initializer = glorot_uniform(seed=0))(f)
-        f = BatchNormalization(axis = 3, name = bn_name_base + '2b')(f)
-        f = Activation('relu')(f)
-
-        #third convolutional layer
-        f = Conv2D(filters = F3,
-                    kernel_size = (1, 1),
-                    strides = (1,1), padding = 'valid',
-                    name = conv_name_base + '2c',
-                    kernel_initializer = glorot_uniform(seed=0))(f)
-        f = BatchNormalization(axis = 3, name = bn_name_base + '2c')(f)
-        f = Activation('relu')(f)
-
-        # add shortcut and generate residual
-        f = Add()([f, f_shortcut])
-        f = Activation('relu')(f)
-
-        return f
-
-    def convolutional_block(self,f, k, filters, stage, block, s=2):
-        # defining name basis
-        conv_name_base = 'res' + str(stage) + block + '_branch'
-        bn_name_base = 'bn' + str(stage) + block + '_branch'
-
-        F1, F2, F3 = filters
-        f_shortcut = f
-
-        # first convolutional layer
-        f = Conv2D(filters = F1,
-            kernel_size = (1, 1),
-            strides = (s,s), padding = 'valid',
-            name = conv_name_base + '2a',
-            kernel_initializer = glorot_uniform(seed=0))(f)
-        f = BatchNormalization(axis = 3, name = bn_name_base + '2a')(f)
-        f = Activation('relu')(f)
-
-        # second convolutional layer
-        f = Conv2D(filters = F2,
-            kernel_size = (k, k),
-            strides = (1,1), padding = 'same',
-            name = conv_name_base + '2b',
-            kernel_initializer = glorot_uniform(seed=0))(f)
-        f = BatchNormalization(axis = 3, name = bn_name_base + '2b')(f)
-        f = Activation('relu')(f)
-
-        #third convolutional layer
-        f = Conv2D(filters = F3,
+        x = Conv2D(filters = F1,
             kernel_size = (1, 1),
             strides = (1,1), padding = 'valid',
-            name = conv_name_base + '2c',
-            kernel_initializer = glorot_uniform(seed=0))(f)
-        f = BatchNormalization(axis = 3, name = bn_name_base + '2c')(f)
-        f = Activation('relu')(f)
+            kernel_initializer = glorot_uniform(seed=0))(x)
+        x = BatchNormalization(axis = 3)(x)
+        x = Activation('relu')(x)
 
-        # add shortcut layer
-        f_shortcut = Conv2D(filters = F3,
-                        kernel_size = (1, 1),
-                        strides = (s,s), padding = 'valid',
-                        name = conv_name_base + '1',
-                        kernel_initializer = glorot_uniform(seed=0))(f_shortcut)
-        f_shortcut = BatchNormalization(axis = 3, name = bn_name_base + '1')(f_shortcut)
+        x = MaxPooling2D((2,2), strides=(2,2))(x)
 
+        x = Conv2D(filters = F2,
+            kernel_size = (1, 1),
+            strides = (1,1), padding = 'valid',
+            kernel_initializer = glorot_uniform(seed=0))(x)
+        x = BatchNormalization(axis = 3)(x)
+        x = Activation('relu')(x)
 
-        f = Add()([f, f_shortcut])
-        f = Activation('relu')(f)
+        x = MaxPooling2D((2,2), strides=(2,2))(x)
 
-        return f
+        x = Conv2D(filters = F3,
+            kernel_size = (1, 1),
+            strides = (1,1), padding = 'valid',
+            kernel_initializer = glorot_uniform(seed=0))(x)
+        x = BatchNormalization(axis = 3)(x)
+        x = Activation('relu')(x)
+
+        x = MaxPooling2D((2,2), strides=(2,2))(x)
+
+        x = Conv2D(filters = F4,
+            kernel_size = (1, 1),
+            strides = (1,1), padding = 'valid',
+            kernel_initializer = glorot_uniform(seed=0))(x)
+        x = BatchNormalization(axis = 3)(x)
+        x = Activation('relu')(x)
+
+        x = MaxPooling2D((2,2), strides=(2,2))(x)
+
+        x = Conv2D(filters = F5,
+            kernel_size = (1, 1),
+            strides = (1,1), padding = 'valid',
+            kernel_initializer = glorot_uniform(seed=0))(x)
+        x = BatchNormalization(axis = 3)(x)
+        x = Activation('relu')(x)
+
+        return x
+
+    def _decoder(self, x, filters):
+        F1, F2, F3, F4, F5 = filters
+        x = Conv2DTranspose(filters = F1,
+            kernel_size = (1, 1),
+            strides = (1,1), padding = 'valid',
+            kernel_initializer = glorot_uniform(seed=0))(x)
+        x = BatchNormalization(axis = 3)(x)
+        x = Activation('relu')(x)
+
+        x = UpSampling2D()(x)
+
+        x = Conv2DTranspose(filters = F2,
+            kernel_size = (1, 1),
+            strides = (1,1), padding = 'valid',
+            kernel_initializer = glorot_uniform(seed=0))(x)
+        x = BatchNormalization(axis = 3)(x)
+        x = Activation('relu')(x)
+
+        x = UpSampling2D()(x)
+
+        x = Conv2DTranspose(filters = F3,
+            kernel_size = (1, 1),
+            strides = (1,1), padding = 'valid',
+            kernel_initializer = glorot_uniform(seed=0))(x)
+        x = BatchNormalization(axis = 3)(x)
+        x = Activation('relu')(x)
+
+        x = UpSampling2D()(x)
+
+        x = Conv2DTranspose(filters = F4,
+            kernel_size = (1, 1),
+            strides = (1,1), padding = 'valid',
+            kernel_initializer = glorot_uniform(seed=0))(x)
+        x = BatchNormalization(axis = 3)(x)
+        x = Activation('relu')(x)
+
+        x = UpSampling2D()(x)
+
+        x = Conv2DTranspose(filters = F5,
+            kernel_size = (1, 1),
+            strides = (1,1), padding = 'valid',
+            kernel_initializer = glorot_uniform(seed=0))(x)
+        x = BatchNormalization(axis = 3)(x)
+        x = Activation('relu')(x)
+
+        return x
 
 
     def build(self, shape=None, load=None):
@@ -155,30 +161,29 @@ class convNN:
             self.shape = shape
 
         # build network
-        input = Input(shape=self.shape)
+        input_a = Input(shape=self.shape)
+        input_b = Input(shape=self.shape)
+        input_c = Input(shape=self.shape)
 
-        f = Conv2D(filters = 16,
-            kernel_size = (5, 5),
-            strides = (1,1), padding = 'same',
-            name = 'conv1',
-            kernel_initializer = glorot_uniform(seed=0))(input)
-        f = BatchNormalization(axis = 3, name = '12c')(f)
-        f = Activation('relu')(f)
+        # encode
 
-        f = self.convolutional_block(f, k=3, filters=[16,16,32], stage='2', block='a', s=2)
-        f = self.identity_block(f, k=3, filters=[32,32,32], stage='2', block='b')
-        f = self.identity_block(f, k=3, filters=[32,32,32], stage='2', block='c')
-        f = MaxPooling2D((3,3),strides=(2,2))(f)
+        a = self._encoder(input_a, [61,128,256,128,64])
+        b = self._encoder(input_b, [64,128,256,128,64])
+        c = self._encoder(input_c, [64,128,256,128,64])
 
-        f = self.convolutional_block(f, k=3, filters=[32,32,64], stage='3', block='a', s=2)
-        f = self.identity_block(f, k=3, filters=[64,64,64], stage='3', block='b')
-        f = self.identity_block(f, k=3, filters=[64,64,64], stage='3', block='c')
+        # decode
+        a = self._decoder(a, [64,128,64,32,1])
+        b = self._decoder(b, [64,128,64,32,1])
+        c = self._decoder(c, [64,128,64,32,1])
 
-        f = GlobalAveragePooling2D()(f)
+        euclidian_ab = Euclidian(1)([a,b])
+        euclidian_ac = Euclidian(1)([a,c])
 
-        output = Dense(2,activation="softmax")(f)
+        merged = tf.stack([euclidian_ab,euclidian_ac],axis=1)
 
-        self.nn = Model(inputs = input, outputs = output)
+        output = Softmax()(merged)
+
+        self.nn = Model(inputs = [input_a,input_b,input_c], outputs = output)
         self.nn.compile(optimizer = self.optimizer,loss=self.loss, metrics=self.metrics)
         self.nn.summary()
 
