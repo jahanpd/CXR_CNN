@@ -12,9 +12,11 @@ from pathlib import Path
 # tf.enable_eager_execution()
 
 class autoencoder:
-    def __init__(self, image_paths, labels, save_path=None):
+    def __init__(self, a_paths, b_paths, c_paths ,labels, save_path=None):
         K.set_floatx('float32')
-        self.image_paths = image_paths
+        self.a_paths = a_paths
+        self.b_paths = b_paths
+        self.c_paths = c_paths
         self.labels = labels
 
         if save_path is not None:
@@ -39,120 +41,172 @@ class autoencoder:
         image /= 255.0  # normalize to [0,1] range
         return image
 
-    def _load_and_preprocess_image(self, path): # load from path and return tensor
-        image = tf.io.read_file(path)
+    def _load_and_preprocess_image(self, paths): # load from path and return tensor
+        image = tf.io.read_file(paths)
         return self._preprocess_image(image)
 
+    def _input_fn(self):
+        a = tf.data.Dataset.from_tensor_slices((self.a_paths))
+        a = a.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
+        b = tf.data.Dataset.from_tensor_slices((self.b_paths))
+        b = b.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
+        c = tf.data.Dataset.from_tensor_slices((self.c_paths))
+        c = c.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
+        label =  tf.data.Dataset.from_tensor_slices((self.labels))
+        dataset = tf.data.Dataset.zip(({"input_1": a, "input_2": b, "input_3": c}, label))
+        dataset = dataset.shuffle(buffer_size=2000)
+        dataset = dataset.batch(32).repeat()
+        dataset = dataset.prefetch(buffer_size=self.AUTOTUNE)
+        return dataset
 
 
-    def build_dataset(self, batch_size=None):
-        path_ds = tf.data.Dataset.from_tensor_slices(self.image_paths)
-        image_ds = path_ds.map(self._load_and_preprocess_image,
-                                num_parallel_calls=self.AUTOTUNE)
-        label_ds = tf.data.Dataset.from_tensor_slices(tf.cast(self.labels, tf.int16))
-        image_label_ds = tf.data.Dataset.zip((image_ds, label_ds))
-        self.ds = image_label_ds.shuffle(buffer_size=2000)
-        if batch_size is not None:
-            self.ds = self.ds.batch(batch_size)
-        else:
-            self.ds = self.ds.batch(32)
-        self.ds = self.ds.repeat()
-        self.ds = self.ds.prefetch(buffer_size=self.AUTOTUNE)
-
-    def _encoder(self, x, filters):
+    def _encoder(self, a, b, c, filters):
         F1, F2, F3, F4, F5 = filters
 
-        x = Conv2D(filters = F1,
+        l1 = Conv2D(filters = F1,
             kernel_size = (1, 1),
             strides = (1,1), padding = 'valid',
-            kernel_initializer = glorot_uniform(seed=0))(x)
-        x = BatchNormalization(axis = 3)(x)
-        x = Activation('relu')(x)
+            kernel_initializer = glorot_uniform(seed=0))
+        b1= BatchNormalization(axis = 3)
+        a1 = Activation('relu')
 
-        x = MaxPooling2D((2,2), strides=(2,2))(x)
+        m1 = MaxPooling2D((2,2), strides=(2,2))
 
-        x = Conv2D(filters = F2,
+        l2 = Conv2D(filters = F2,
             kernel_size = (1, 1),
             strides = (1,1), padding = 'valid',
-            kernel_initializer = glorot_uniform(seed=0))(x)
-        x = BatchNormalization(axis = 3)(x)
-        x = Activation('relu')(x)
+            kernel_initializer = glorot_uniform(seed=0))
+        b2= BatchNormalization(axis = 3)
+        a2 = Activation('relu')
 
-        x = MaxPooling2D((2,2), strides=(2,2))(x)
+        m2 = MaxPooling2D((2,2), strides=(2,2))
 
-        x = Conv2D(filters = F3,
+        l3 = Conv2D(filters = F3,
             kernel_size = (1, 1),
             strides = (1,1), padding = 'valid',
-            kernel_initializer = glorot_uniform(seed=0))(x)
-        x = BatchNormalization(axis = 3)(x)
-        x = Activation('relu')(x)
+            kernel_initializer = glorot_uniform(seed=0))
+        b3= BatchNormalization(axis = 3)
+        a3 = Activation('relu')
 
-        x = MaxPooling2D((2,2), strides=(2,2))(x)
+        m3 = MaxPooling2D((2,2), strides=(2,2))
 
-        x = Conv2D(filters = F4,
+        l4 = Conv2D(filters = F4,
             kernel_size = (1, 1),
             strides = (1,1), padding = 'valid',
-            kernel_initializer = glorot_uniform(seed=0))(x)
-        x = BatchNormalization(axis = 3)(x)
-        x = Activation('relu')(x)
+            kernel_initializer = glorot_uniform(seed=0))
+        b4= BatchNormalization(axis = 3)
+        a4 = Activation('relu')
 
-        x = MaxPooling2D((2,2), strides=(2,2))(x)
+        m4 = MaxPooling2D((2,2), strides=(2,2))
 
-        x = Conv2D(filters = F5,
+        l5 = Conv2D(filters = F5,
             kernel_size = (1, 1),
             strides = (1,1), padding = 'valid',
-            kernel_initializer = glorot_uniform(seed=0))(x)
-        x = BatchNormalization(axis = 3)(x)
-        x = Activation('relu')(x)
+            kernel_initializer = glorot_uniform(seed=0))
+        b5 = BatchNormalization(axis = 3)
+        a5 = Activation('relu')
 
-        return x
+        a,b,c = l1(a),l1(b),l1(c)
+        a,b,c = b1(a),b1(b),b1(c)
+        a,b,c = a1(a),a1(b),a1(c)
+        a,b,c = m1(a),m1(b),m1(c)
 
-    def _decoder(self, x, filters):
+        a,b,c = l2(a),l2(b),l2(c)
+        a,b,c = b2(a),b2(b),b2(c)
+        a,b,c = a2(a),a2(b),a2(c)
+        a,b,c = m2(a),m2(b),m2(c)
+
+        a,b,c = l3(a),l3(b),l3(c)
+        a,b,c = b3(a),b3(b),b3(c)
+        a,b,c = a3(a),a3(b),a3(c)
+        a,b,c = m3(a),m3(b),m3(c)
+
+        a,b,c = l4(a),l4(b),l4(c)
+        a,b,c = b4(a),b4(b),b4(c)
+        a,b,c = a4(a),a4(b),a4(c)
+        a,b,c = m4(a),m4(b),m4(c)
+
+        a,b,c = l5(a),l5(b),l5(c)
+        a,b,c = b5(a),b5(b),b5(c)
+        a,b,c = a5(a),a5(b),a5(c)
+
+        return a,b,c
+
+    def _decoder(self, a, b, c, filters):
         F1, F2, F3, F4, F5 = filters
-        x = Conv2DTranspose(filters = F1,
+
+        l1 = Conv2DTranspose(filters = F1,
             kernel_size = (1, 1),
             strides = (1,1), padding = 'valid',
-            kernel_initializer = glorot_uniform(seed=0))(x)
-        x = BatchNormalization(axis = 3)(x)
-        x = Activation('relu')(x)
+            kernel_initializer = glorot_uniform(seed=0))
+        b1 = BatchNormalization(axis = 3)
+        a1 = Activation('relu')
 
-        x = UpSampling2D()(x)
+        u1 = UpSampling2D()
 
-        x = Conv2DTranspose(filters = F2,
+        l2 = Conv2DTranspose(filters = F2,
             kernel_size = (1, 1),
             strides = (1,1), padding = 'valid',
-            kernel_initializer = glorot_uniform(seed=0))(x)
-        x = BatchNormalization(axis = 3)(x)
-        x = Activation('relu')(x)
+            kernel_initializer = glorot_uniform(seed=0))
+        b2 = BatchNormalization(axis = 3)
+        a2 = Activation('relu')
 
-        x = UpSampling2D()(x)
+        u2 = UpSampling2D()
 
-        x = Conv2DTranspose(filters = F3,
+        l3 = Conv2DTranspose(filters = F3,
             kernel_size = (1, 1),
             strides = (1,1), padding = 'valid',
-            kernel_initializer = glorot_uniform(seed=0))(x)
-        x = BatchNormalization(axis = 3)(x)
-        x = Activation('relu')(x)
+            kernel_initializer = glorot_uniform(seed=0))
+        b3 = BatchNormalization(axis = 3)
+        a3 = Activation('relu')
 
-        x = UpSampling2D()(x)
+        u3 = UpSampling2D()
 
-        x = Conv2DTranspose(filters = F4,
+        l4 = Conv2DTranspose(filters = F4,
             kernel_size = (1, 1),
             strides = (1,1), padding = 'valid',
-            kernel_initializer = glorot_uniform(seed=0))(x)
-        x = BatchNormalization(axis = 3)(x)
-        x = Activation('relu')(x)
+            kernel_initializer = glorot_uniform(seed=0))
+        b4 = BatchNormalization(axis = 3)
+        a4 = Activation('relu')
 
-        x = UpSampling2D()(x)
+        u4 = UpSampling2D()
 
-        x = Conv2DTranspose(filters = F5,
+        l5 = Conv2DTranspose(filters = F5,
             kernel_size = (1, 1),
             strides = (1,1), padding = 'valid',
-            kernel_initializer = glorot_uniform(seed=0))(x)
-        x = BatchNormalization(axis = 3)(x)
-        x = Activation('relu')(x)
+            kernel_initializer = glorot_uniform(seed=0))
+        b5 = BatchNormalization(axis = 3)
+        a5 = Activation('relu')
 
-        return x
+        flat = Flatten()
+
+        a,b,c = l1(a),l1(b),l1(c)
+        a,b,c = b1(a),b1(b),b1(c)
+        a,b,c = a1(a),a1(b),a1(c)
+        a,b,c = u1(a),u1(b),u1(c)
+
+        a,b,c = l2(a),l2(b),l2(c)
+        a,b,c = b2(a),b2(b),b2(c)
+        a,b,c = a2(a),a2(b),a2(c)
+        a,b,c = u2(a),u2(b),u2(c)
+
+        a,b,c = l3(a),l3(b),l3(c)
+        a,b,c = b3(a),b3(b),b3(c)
+        a,b,c = a3(a),a3(b),a3(c)
+        a,b,c = u3(a),u3(b),u3(c)
+
+        a,b,c = l4(a),l4(b),l4(c)
+        a,b,c = b4(a),b4(b),b4(c)
+        a,b,c = a4(a),a4(b),a4(c)
+        a,b,c = u4(a),u4(b),u4(c)
+
+        a,b,c = l5(a),l5(b),l5(c)
+        a,b,c = b5(a),b5(b),b5(c)
+        a,b,c = a5(a),a5(b),a5(c)
+
+        a,b,c = flat(a),flat(b),flat(c)
+
+        return a,b,c
 
 
     def build(self, shape=None, load=None):
@@ -167,14 +221,12 @@ class autoencoder:
 
         # encode
 
-        a = self._encoder(input_a, [61,128,256,128,64])
-        b = self._encoder(input_b, [64,128,256,128,64])
-        c = self._encoder(input_c, [64,128,256,128,64])
+        a,b,c = self._encoder(input_a,input_b,input_c, [16,32,64,64,32])
 
         # decode
-        a = self._decoder(a, [64,128,64,32,1])
-        b = self._decoder(b, [64,128,64,32,1])
-        c = self._decoder(c, [64,128,64,32,1])
+        a,b,c = self._decoder(a,b,c, [32,64,32,16,1])
+
+
 
         euclidian_ab = Euclidian(1)([a,b])
         euclidian_ac = Euclidian(1)([a,c])
@@ -188,13 +240,13 @@ class autoencoder:
         self.nn.summary()
 
         if load is not None:
-            self.nn = load_model(self.save_path + "CNN.h5")
+            self.nn = load_model(self.save_path + "ae.h5")
 
     def train(self, epoch, load=None):
         if load is not None:
             self.nn.load_weights(self.save_path)
-        history = self.nn.fit(self.ds,epochs=epoch,steps_per_epoch=5000)
-        self.nn.save(self.save_path+"CNN.h5")
+        history = self.nn.fit(self._input_fn(), epochs=epoch, steps_per_epoch=5000)
+        self.nn.save(self.save_path+"ae.h5")
         return history
 
     def predict(self,test_paths,labels):
