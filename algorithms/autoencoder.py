@@ -155,17 +155,17 @@ class autoencoder:
         self.nn.summary()
 
         if load is not None:
-            self.nn = load_model(self.save_path + "ae.h5")
+            self.nn.load_weights(self.save_path + load)
 
     def train(self, epoch, load=None):
-        cp_callback = tf.keras.callbacks.ModelCheckpoint(self.save_path+'triple.ckpt',
+        cp_callback = tf.keras.callbacks.ModelCheckpoint(self.save_path+"/triple.ckpt",
                                                  save_weights_only=True,
                                                  verbose=1)
         if load is not None:
             self.nn.load_weights(self.save_path + load)
         history = self.nn.fit(self._input_fn(self.a_paths,self.b_paths,self.c_paths,self.labels),
                             epochs=epoch, steps_per_epoch=8*100000,callbacks = [cp_callback])
-        self.nn.save_weights(self.save_path + "model.weights")
+        self.nn.save_weights(self.save_path + "triple.weights")
         return history
 
     def predict(self,x_a,x_b,x_v, y):
