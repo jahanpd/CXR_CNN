@@ -3,18 +3,22 @@ import tensorflow as tf
 from tensorflow.keras.layers import Input, Add, Dense, Activation, ZeroPadding2D, BatchNormalization, Flatten, Conv2D, AveragePooling2D, MaxPooling2D, UpSampling2D, GlobalAveragePooling2D
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.initializers import glorot_uniform
+from tensorflow.keras.callbacks import EarlyStopping
 import tensorflow.keras.backend as K
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import classification_report
 from pathlib import Path
+from tensorflow.keras.utils import multi_gpu_model
 
 tf.enable_eager_execution()
 
 class convNN:
-    def __init__(self, image_paths, labels, save_path=None):
+    def __init__(self, image_paths, labels, test_x, test_y, save_path=None):
         K.set_floatx('float32')
-        self.image_paths = image_paths
-        self.labels = labels
+        self.x = image_paths
+        self.y = labels
+        self.xt = test_x
+        self.yt = test_y
 
         if save_path is not None:
             self.save_path = save_path
@@ -25,12 +29,8 @@ class convNN:
 
         self.AUTOTUNE = tf.data.experimental.AUTOTUNE
         self.optimizer = 'Adam'
-        self.loss = 'binary_crossentropy'
-        self.metrics = [tf.keras.metrics.AUC(),
-                        tf.keras.metrics.FalseNegatives(),
-                        tf.keras.metrics.FalsePositives(),
-                        tf.keras.metrics.TrueNegatives(),
-                        tf.keras.metrics.TruePositives()]
+        self.loss = 'mse'
+        self.metrics = ['mse']
 
     def _preprocess_image(self, image):
         image = tf.image.decode_jpeg(image, channels = self.channels)
@@ -38,25 +38,19 @@ class convNN:
         image /= 255.0  # normalize to [0,1] range
         return image
 
-    def _load_and_preprocess_image(self, path): # load from path and return tensor
-        image = tf.io.read_file(path)
+    def _load_and_preprocess_image(self, paths): # load from path and return tensor
+        image = tf.io.read_file(paths)
         return self._preprocess_image(image)
 
-
-
-    def build_dataset(self, batch_size=None):
-        path_ds = tf.data.Dataset.from_tensor_slices(self.image_paths)
-        image_ds = path_ds.map(self._load_and_preprocess_image,
-                                num_parallel_calls=self.AUTOTUNE)
-        label_ds = tf.data.Dataset.from_tensor_slices(tf.cast(self.labels, tf.int16))
-        image_label_ds = tf.data.Dataset.zip((image_ds, label_ds))
-        self.ds = image_label_ds.shuffle(buffer_size=2000)
-        if batch_size is not None:
-            self.ds = self.ds.batch(batch_size)
-        else:
-            self.ds = self.ds.batch(32)
-        self.ds = self.ds.repeat()
-        self.ds = self.ds.prefetch(buffer_size=self.AUTOTUNE)
+    def _input_fn(self, x, y):
+        x = tf.data.Dataset.from_tensor_slices((x))
+        x = x.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
+        label =  tf.data.Dataset.from_tensor_slices((y))
+        dataset = tf.data.Dataset.zip((x, label))
+        dataset = dataset.shuffle(buffer_size=100)
+        dataset = dataset.batch(8).repeat()
+        dataset = dataset.prefetch(buffer_size=self.AUTOTUNE)
+        return dataset
 
     def identity_block(self,f, k, filters, stage, block):
         # defining name basis
@@ -148,7 +142,6 @@ class convNN:
 
         return f
 
-
     def build(self, shape=None, load=None):
         self.shape = (self.img_rows,self.img_cols,self.channels)
         if shape is not None:
@@ -176,9 +169,18 @@ class convNN:
 
         f = GlobalAveragePooling2D()(f)
 
-        output = Dense(2,activation="softmax")(f)
+        output = Dense(1,activation="relu")(f)
 
         self.nn = Model(inputs = input, outputs = output)
+
+        try:
+            # self.nn = multi_gpu_model(self.nn, gpus=2)
+            print("Training using multiple GPUs..")
+        except Exception as e:
+            print("Training using single GPU or CPU..")
+
+            print(e)
+
         self.nn.compile(optimizer = self.optimizer,loss=self.loss, metrics=self.metrics)
         self.nn.summary()
 
@@ -187,18 +189,20 @@ class convNN:
 
     def train(self, epoch, load=None):
         if load is not None:
-            self.nn.load_weights(self.save_path)
-        history = self.nn.fit(self.ds,epochs=epoch,steps_per_epoch=5000)
+            self.nn.load_weights(self.save_path + load)
+        es = EarlyStopping(monitor='val_loss', mode='min', patience=5, verbose=1,restore_best_weights=True)
+        cp_callback = tf.keras.callbacks.ModelCheckpoint(self.save_path+"/age.ckpt",
+                                                 save_weights_only=True,
+                                                 verbose=1)
+        history = self.nn.fit(self._input_fn(self.x,self.y),
+                            epochs=epoch,
+                            steps_per_epoch=8*int(len(self.x)/8),
+                            validation_data=self._input_fn(self.xt,self.yt),
+                            validation_steps=8*int(len(self.xt)/8),
+                            callbacks = [cp_callback,es])
         self.nn.save(self.save_path+"CNN.h5")
         return history
 
-    def predict(self,test_paths,labels):
-        path_ds = tf.data.Dataset.from_tensor_slices(test_paths)
-        image_ds = path_ds.map(self._load_and_preprocess_image,
-                                num_parallel_calls=self.AUTOTUNE)
-        label_ds = tf.data.Dataset.from_tensor_slices(tf.cast(labels, tf.int16))
-        ds = tf.data.Dataset.zip((image_ds, label_ds))
-        ds = ds.batch(32)
-        ds = ds.prefetch(buffer_size=self.AUTOTUNE)
-        predictions = self.nn.predict(ds)
+    def predict(self,test_paths,ages):
+        predictions = self.nn.predict(self._input_fn(test_paths,ages))
         return [self.nn.evaluate(ds),predictions]
