@@ -12,9 +12,8 @@ from pathlib import Path
 # tf.enable_eager_execution()
 
 class autoencoder:
-    def __init__(self, a_paths, b_paths, c_paths ,labels, save_path=None):
+    def __init__(self, save_path=None):
         K.set_floatx('float32')
-        self.a_paths,self.b_paths,self.c_paths,self.labels = a_paths, b_paths,c_paths, labels
 
         if save_path is not None:
             self.save_path = save_path
@@ -26,13 +25,7 @@ class autoencoder:
         self.AUTOTUNE = tf.data.experimental.AUTOTUNE
         self.optimizer = 'Adam'
         self.loss = 'binary_crossentropy'
-        self.metrics = [tf.keras.metrics.BinaryCrossentropy(),
-                        tf.keras.metrics.AUC(),
-                        tf.keras.metrics.BinaryAccuracy()]
-                        #tf.keras.metrics.FalseNegatives(),
-                        #tf.keras.metrics.FalsePositives(),
-                        #tf.keras.metrics.TrueNegatives(),
-                        #tf.keras.metrics.TruePositives()]
+        self.metrics = [tf.keras.metrics.BinaryAccuracy()]
 
     def _preprocess_image(self, image):
         image = tf.image.decode_jpeg(image, channels = self.channels)
@@ -58,6 +51,16 @@ class autoencoder:
         dataset = dataset.prefetch(buffer_size=self.AUTOTUNE)
         return dataset
 
+    def _input_pred(self, x_a,x_b,x_c):
+        a = tf.data.Dataset.from_tensor_slices((x_a))
+        a = a.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
+        b = tf.data.Dataset.from_tensor_slices((x_b))
+        b = b.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
+        c = tf.data.Dataset.from_tensor_slices((x_c))
+        c = c.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
+        dataset = tf.data.Dataset.zip(({"input_1": a, "input_2": b, "input_3": c}))
+        dataset = dataset.batch(10).repeat()
+        return dataset
 
     def _resblock(self, a, b, c, filters):
         F1, F2, F3, F4 = filters
@@ -157,17 +160,37 @@ class autoencoder:
         if load is not None:
             self.nn.load_weights(self.save_path + load)
 
-    def train(self, epoch, load=None):
+    def train(self, a_paths, b_paths, c_paths, epochs=10, load=None):
+        
+        y = np.full((len(a_paths),2),[0,1])
+        
         cp_callback = tf.keras.callbacks.ModelCheckpoint(self.save_path+"/triple.ckpt",
                                                  save_weights_only=True,
                                                  verbose=1)
         if load is not None:
             self.nn.load_weights(self.save_path + load)
-        history = self.nn.fit(self._input_fn(self.a_paths,self.b_paths,self.c_paths,self.labels),
-                            epochs=epoch, steps_per_epoch=8*100000,callbacks = [cp_callback])
+        
+        history = self.nn.fit(self._input_fn(a_paths,b_paths,c_paths,y),
+                              epochs=epochs, 
+                              steps_per_epoch=4*100000,
+                              callbacks = [cp_callback])
+        
         self.nn.save_weights(self.save_path + "triple.weights")
         return history
 
     def predict(self,x_a,x_b,x_v, y):
         predictions = self.nn.predict(self._input_fn(x_a,x_b,x_v, y))
         return [self.nn.evaluate(self._input_fn(x_a,x_b,x_v, y)),predictions]
+    
+    def predict_proba(self, x_a,x_b,x_c, y):
+        predictions = np.array(()) # array to store predictions
+        idx = np.random.choice(len(y), 100,  replace=True)
+        temp_b,temp_c = x_b[idx], x_c[idx]
+        for n in range(len(y)):
+            temp = np.array(()) # array to store predictions
+            x_same = np.tile(x_a[n],100)
+            prediction = self.nn.predict(self._input_pred(x_same,temp_b,temp_c), steps=10)
+            temp = np.mean(prediction, axis=0)
+            predictions = np.append(predictions, 1-temp[0])
+            prob_aki = np.array([x if y == 1 else 1-x for x,y in zip(predictions.flatten(), y[idx])])
+        return prob_aki
