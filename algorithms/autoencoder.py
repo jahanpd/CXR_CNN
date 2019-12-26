@@ -73,7 +73,7 @@ class autoencoder:
         c = c.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
         label =  tf.data.Dataset.from_tensor_slices((y))
         dataset = tf.data.Dataset.zip(({"input_1": a, "input_2": b, "input_3": c}, label))
-        ddataset = dataset.batch(10).repeat()
+        dataset = dataset.batch(10).repeat()
         return dataset
 
     def _resblock(self, a, b, c, filters):
@@ -177,9 +177,8 @@ class autoencoder:
     def train(self, a_paths, b_paths, c_paths, epochs=10, load=None):
 
         y = np.full((len(a_paths),2),[0,1])
-        X = np.concatenate((a_paths, b_paths, c_paths, y), axis=1)
-
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
+        X = np.dstack((a_paths, b_paths, c_paths))[0]
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=1000, random_state=42)
         cp_callback = tf.keras.callbacks.ModelCheckpoint(self.save_path+"/triple.ckpt",
                                                  save_weights_only=True,
                                                  verbose=1)
@@ -192,7 +191,8 @@ class autoencoder:
                               epochs=epochs,
                               steps_per_epoch=4*100000,
                               callbacks = [cp_callback, es],
-                              validation_data=_input_pred(X_test[:,0],X_test[:,1],X_test[:,2],y_test))
+                              validation_data=self._input_valid(X_test[:,0],X_test[:,1],X_test[:,2],y_test),
+                              validation_steps=100)
 
         self.nn.save_weights(self.save_path + "triple.weights")
         return history
