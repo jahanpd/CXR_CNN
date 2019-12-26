@@ -4,6 +4,8 @@ from tensorflow.keras.layers import Input, Add, Dense, Activation, Softmax, Batc
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.initializers import glorot_uniform
 import tensorflow.keras.backend as K
+from tensorflow.keras.callbacks import EarlyStopping
+from sklearn.model_selection import train_test_split
 from algorithms.custom import Euclidian
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import classification_report
@@ -60,6 +62,18 @@ class autoencoder:
         c = c.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
         dataset = tf.data.Dataset.zip(({"input_1": a, "input_2": b, "input_3": c}))
         dataset = dataset.batch(10).repeat()
+        return dataset
+
+    def _input_valid(self, x_a,x_b,x_c, y):
+        a = tf.data.Dataset.from_tensor_slices((x_a))
+        a = a.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
+        b = tf.data.Dataset.from_tensor_slices((x_b))
+        b = b.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
+        c = tf.data.Dataset.from_tensor_slices((x_c))
+        c = c.map(self._load_and_preprocess_image, num_parallel_calls=self.AUTOTUNE)
+        label =  tf.data.Dataset.from_tensor_slices((y))
+        dataset = tf.data.Dataset.zip(({"input_1": a, "input_2": b, "input_3": c}, label))
+        ddataset = dataset.batch(10).repeat()
         return dataset
 
     def _resblock(self, a, b, c, filters):
@@ -161,27 +175,32 @@ class autoencoder:
             self.nn.load_weights(self.save_path + load)
 
     def train(self, a_paths, b_paths, c_paths, epochs=10, load=None):
-        
+
         y = np.full((len(a_paths),2),[0,1])
-        
+        X = np.concatenate((a_paths, b_paths, c_paths, y), axis=1)
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
         cp_callback = tf.keras.callbacks.ModelCheckpoint(self.save_path+"/triple.ckpt",
                                                  save_weights_only=True,
                                                  verbose=1)
+
+        es = EarlyStopping(monitor='val_loss', patience = 5, verbose=1,restore_best_weights=True)
         if load is not None:
             self.nn.load_weights(self.save_path + load)
-        
-        history = self.nn.fit(self._input_fn(a_paths,b_paths,c_paths,y),
-                              epochs=epochs, 
+
+        history = self.nn.fit(self._input_fn(X_train[:,0],X_train[:,1],X_train[:,2],y_train),
+                              epochs=epochs,
                               steps_per_epoch=4*100000,
-                              callbacks = [cp_callback])
-        
+                              callbacks = [cp_callback, es],
+                              validation_data=_input_pred(X_test[:,0],X_test[:,1],X_test[:,2],y_test))
+
         self.nn.save_weights(self.save_path + "triple.weights")
         return history
 
     def predict(self,x_a,x_b,x_v, y):
         predictions = self.nn.predict(self._input_fn(x_a,x_b,x_v, y))
         return [self.nn.evaluate(self._input_fn(x_a,x_b,x_v, y)),predictions]
-    
+
     def predict_proba(self, x_a,x_b,x_c, y):
         predictions = np.array(()) # array to store predictions
         idx = np.random.choice(len(y), 100,  replace=True)
